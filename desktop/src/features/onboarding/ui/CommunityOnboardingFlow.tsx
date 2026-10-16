@@ -339,9 +339,6 @@ export function CommunityOnboardingFlow({
     transaction?.stage === "finalizing" ||
     transaction?.stage === "entering";
 
-  // Seed profile fields from the relay when the profile step is shown. This
-  // covers cases where the skip raced or was bypassed after navigating Back.
-  // Only untouched fields are seeded.
   React.useEffect(() => {
     if (!isProfileStage) return;
     void getProfile()

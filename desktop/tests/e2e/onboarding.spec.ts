@@ -2809,8 +2809,6 @@ test("delayed profile seed does not undo an explicit avatar clear", async ({
   await page.getByTestId("community-avatar-done").click();
   await expect(page.getByTestId("community-avatar-empty")).toBeVisible();
 
-  // The second profile read started when Back reopened this stage and resolves
-  // after the explicit clear. It must not restore the relay's older avatar.
   await page.waitForTimeout(1_000);
   await expect(page.getByTestId("community-avatar-empty")).toBeVisible();
 
