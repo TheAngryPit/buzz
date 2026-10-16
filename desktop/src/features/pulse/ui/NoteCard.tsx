@@ -18,7 +18,7 @@ import { AnimatedCount } from "@/shared/ui/AnimatedCount";
 import { Markdown } from "@/shared/ui/markdown";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/shared/ui/tooltip";
 import { UserAvatar } from "@/shared/ui/UserAvatar";
-import { truncatePubkey } from "@/shared/lib/pubkey";
+import { truncateNpub } from "@/shared/lib/pubkey";
 
 export type NoteCardActions = {
   reply?: (
@@ -69,17 +69,22 @@ function ReplyParentContext({
       cachedProfile?.name?.trim() ||
       fetchedProfile?.displayName?.trim() ||
       fetchedProfile?.name?.trim() ||
-      truncatePubkey(parentNote.pubkey)
+      truncateNpub(parentNote.pubkey)
     : null;
   const parentAvatarUrl =
     cachedProfile?.avatarUrl ?? fetchedProfile?.avatarUrl ?? null;
+  const parentIsAgent = cachedProfile?.isAgent === true;
   const parentSnippet = parentNote ? noteSnippet(parentNote.content) : null;
 
   return (
     <div className="mt-2 truncate rounded-xl border border-border/50 bg-muted/25 px-3 py-2 text-xs text-muted-foreground">
       {parentNote ? (
         <div className="flex min-w-0 items-center gap-1.5">
-          <UserProfilePopover pubkey={parentNote.pubkey} triggerElement="span">
+          <UserProfilePopover
+            pubkey={parentNote.pubkey}
+            role={parentIsAgent ? "bot" : undefined}
+            triggerElement="span"
+          >
             <button
               className="flex shrink-0 rounded-md focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
               type="button"
@@ -88,6 +93,7 @@ function ReplyParentContext({
                 avatarUrl={parentAvatarUrl}
                 className="!h-4 !w-4 shrink-0"
                 displayName={parentDisplayName ?? "Parent note author"}
+                shape={parentIsAgent ? "squircle" : "circle"}
               />
             </button>
           </UserProfilePopover>
@@ -148,7 +154,7 @@ export function NoteCard({
   const displayName =
     profile?.displayName?.trim() ||
     profile?.name?.trim() ||
-    truncatePubkey(note.pubkey);
+    truncateNpub(note.pubkey);
   const avatarUrl = profile?.avatarUrl ?? null;
   const [isReplyComposerOpen, setIsReplyComposerOpen] = React.useState(false);
   const actionButtonClass =
@@ -175,6 +181,7 @@ export function NoteCard({
             avatarUrl={avatarUrl}
             className="!h-9 !w-9 shrink-0"
             displayName={displayName}
+            shape={isAgent ? "squircle" : "circle"}
           />
           {isAgent ? (
             <Bot className="absolute -bottom-0.5 -right-0.5 h-4 w-4 rounded-full bg-background p-0.5 text-muted-foreground" />
@@ -304,6 +311,7 @@ export function NoteCard({
                     avatarUrl={currentUserAvatarUrl}
                     className="!h-8 !w-8 shrink-0"
                     displayName={currentUserDisplayName}
+                    shape={currentUserProfile?.isAgent ? "squircle" : "circle"}
                   />
                   <span className="max-w-32 truncate text-sm font-medium text-foreground">
                     {currentUserDisplayName}

@@ -1,9 +1,9 @@
 import type { Profile, UserProfileSummary } from "@/shared/api/types";
-import { normalizePubkey, truncatePubkey } from "@/shared/lib/pubkey";
+import { normalizePubkey, truncateNpub } from "@/shared/lib/pubkey";
 
 export type UserProfileLookup = Record<string, UserProfileSummary>;
 
-export { truncatePubkey };
+export { truncateNpub };
 
 /**
  * Deep-equal two profile lookups by value. Used to stabilise the merged
@@ -137,7 +137,7 @@ export function resolveUserLabel(input: {
     return safeFallback;
   }
 
-  return truncatePubkey(pubkey);
+  return truncateNpub(pubkey);
 }
 
 /**
@@ -162,11 +162,12 @@ export function resolveUserSecondaryLabel(input: {
   profiles?: UserProfileLookup;
 }) {
   const profile = getResolvedProfile(input.pubkey, input.profiles);
-  const displayName = profile?.displayName?.trim();
-  const name = profile?.name?.trim();
+  const hasProfileName = !!(
+    profile?.displayName?.trim() || profile?.name?.trim()
+  );
   const nip05Handle = profile?.nip05Handle?.trim();
 
-  if ((displayName || name) && nip05Handle) {
+  if (hasProfileName && nip05Handle) {
     return nip05Handle;
   }
 
@@ -175,7 +176,7 @@ export function resolveUserSecondaryLabel(input: {
 
 /**
  * Label for an agent's owner: "you" when the current user owns it, otherwise
- * the owner's NIP-05 handle, display name, Nostr name, or truncated pubkey.
+ * the owner's display name, NIP-05 handle, or truncated pubkey.
  */
 export function formatOwnerLabel(
   ownerPubkey: string | null | undefined,
@@ -196,9 +197,9 @@ export function formatOwnerLabel(
 
   const owner = ownerProfiles?.[normalizedOwnerPubkey];
   return (
-    owner?.nip05Handle?.trim() ||
     owner?.displayName?.trim() ||
+    owner?.nip05Handle?.trim() ||
     owner?.name?.trim() ||
-    truncatePubkey(ownerPubkey)
+    truncateNpub(ownerPubkey)
   );
 }

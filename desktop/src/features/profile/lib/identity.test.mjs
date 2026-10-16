@@ -3,7 +3,6 @@ import test from "node:test";
 
 import {
   formatOwnerLabel,
-  mergeCurrentProfileIntoLookup,
   profileLookupsEqual,
   resolveUserLabel,
 } from "./identity.ts";
@@ -11,9 +10,12 @@ import {
 const OWNER_PUBKEY =
   "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
 
+// npubEncode(OWNER_PUBKEY), pinned so a fallback regression cannot pass by
+// re-deriving the expectation from the code under test.
+const OWNER_NPUB_COMPACT = "npub1hwa…04hu";
+
 const summary = (over = {}) => ({
   displayName: "Ada",
-  name: null,
   avatarUrl: "https://x/a.png",
   nip05Handle: "ada@x",
   ownerPubkey: null,
@@ -21,29 +23,50 @@ const summary = (over = {}) => ({
   ...over,
 });
 
-test("formatOwnerLabel resolves a known owner's display name", () => {
+test("formatOwnerLabel prefers the owner’s authored labels over the compact npub", () => {
+  // The label ladder: display name first, then a NIP-05 handle, then the
+  // key’s compact npub — never raw hex.
   assert.equal(
     formatOwnerLabel(OWNER_PUBKEY, null, {
-      [OWNER_PUBKEY]: summary({
-        displayName: "baxen",
-        nip05Handle: null,
-      }),
+      [OWNER_PUBKEY]: summary({ displayName: "baxen" }),
     }),
     "baxen",
   );
+  assert.equal(
+    formatOwnerLabel(OWNER_PUBKEY, "c".repeat(64), {
+      [OWNER_PUBKEY]: summary({
+        nip05Handle: "baxen@relay",
+        displayName: null,
+      }),
+    }),
+    "baxen@relay",
+  );
+  assert.equal(
+    formatOwnerLabel(OWNER_PUBKEY, "c".repeat(64), {}),
+    OWNER_NPUB_COMPACT,
+  );
 });
 
-test("formatOwnerLabel prefers NIP-05 when all owner identity fields coexist", () => {
+test("formatOwnerLabel keeps display name and NIP-05 ahead of Nostr name", () => {
   assert.equal(
     formatOwnerLabel(OWNER_PUBKEY, null, {
-      [OWNER_PUBKEY]: {
-        pubkey: OWNER_PUBKEY,
-        name: "legacy-name",
-        displayName: "Human Name",
-        nip05Handle: "owner@example.com",
-      },
+      [OWNER_PUBKEY]: summary({
+        displayName: "Display",
+        nip05Handle: "id@x",
+        name: "short",
+      }),
     }),
-    "owner@example.com",
+    "Display",
+  );
+  assert.equal(
+    formatOwnerLabel(OWNER_PUBKEY, null, {
+      [OWNER_PUBKEY]: summary({
+        displayName: null,
+        nip05Handle: "id@x",
+        name: "short",
+      }),
+    }),
+    "id@x",
   );
 });
 
@@ -53,6 +76,43 @@ test("formatOwnerLabel calls the viewer-owned agent's owner you", () => {
 
 test("formatOwnerLabel returns null when verified ownership is absent", () => {
   assert.equal(formatOwnerLabel(null, OWNER_PUBKEY, {}), null);
+});
+
+test("resolveUserLabel falls back to the key’s compact npub, never raw hex", () => {
+  // No profile, no fallback name: the last resort is the npub compact.
+  assert.equal(
+    resolveUserLabel({ pubkey: OWNER_PUBKEY, profiles: {} }),
+    OWNER_NPUB_COMPACT,
+  );
+  // A provided fallback name still wins over the key form.
+  assert.equal(
+    resolveUserLabel({
+      pubkey: OWNER_PUBKEY,
+      profiles: {},
+      fallbackName: "legacy relay agent",
+    }),
+    "legacy relay agent",
+  );
+  // A resolved display name wins over everything.
+  assert.equal(
+    resolveUserLabel({
+      pubkey: OWNER_PUBKEY,
+      profiles: { [OWNER_PUBKEY]: summary({ displayName: "baxen" }) },
+    }),
+    "baxen",
+  );
+});
+
+test("resolveUserLabel uses the Nostr name when display name is absent", () => {
+  assert.equal(
+    resolveUserLabel({
+      pubkey: OWNER_PUBKEY,
+      profiles: {
+        [OWNER_PUBKEY]: summary({ displayName: "  ", name: "  bob  " }),
+      },
+    }),
+    "bob",
+  );
 });
 
 test("profileLookupsEqual: same reference is equal", () => {
@@ -100,72 +160,6 @@ test("profileLookupsEqual: a changed field is not equal", () => {
 
 test("profileLookupsEqual: two empty lookups are equal", () => {
   assert.equal(profileLookupsEqual({}, {}), true);
-});
-
-test("resolveUserLabel uses a legacy kind-0 name when display_name is absent", () => {
-  assert.equal(
-    resolveUserLabel({
-      pubkey: OWNER_PUBKEY,
-      profiles: {
-        [OWNER_PUBKEY]: summary({
-          displayName: null,
-          name: "legacy-name",
-          nip05Handle: null,
-        }),
-      },
-    }),
-    "legacy-name",
-  );
-});
-
-test("mergeCurrentProfileIntoLookup uses a nonblank name as its presentation label", () => {
-  const profiles = mergeCurrentProfileIntoLookup(
-    {
-      [OWNER_PUBKEY]: summary({
-        displayName: "legacy-name",
-        name: "legacy-name",
-      }),
-    },
-    {
-      pubkey: OWNER_PUBKEY,
-      name: "legacy-name",
-      displayName: "   ",
-      avatarUrl: null,
-      nip05Handle: null,
-    },
-  );
-
-  assert.equal(profiles?.[OWNER_PUBKEY]?.displayName, "legacy-name");
-  assert.equal(profiles?.[OWNER_PUBKEY]?.name, "legacy-name");
-  assert.equal(
-    resolveUserLabel({ pubkey: OWNER_PUBKEY, profiles }),
-    "legacy-name",
-  );
-});
-
-test("mergeCurrentProfileIntoLookup does not restore a cleared name from stale lookup data", () => {
-  const profiles = mergeCurrentProfileIntoLookup(
-    {
-      [OWNER_PUBKEY]: summary({
-        displayName: "legacy-name",
-        name: "legacy-name",
-      }),
-    },
-    {
-      pubkey: OWNER_PUBKEY,
-      name: null,
-      displayName: null,
-      avatarUrl: null,
-      nip05Handle: null,
-    },
-  );
-
-  assert.equal(profiles?.[OWNER_PUBKEY]?.displayName, null);
-  assert.equal(profiles?.[OWNER_PUBKEY]?.name, null);
-  assert.notEqual(
-    resolveUserLabel({ pubkey: OWNER_PUBKEY, profiles }),
-    "legacy-name",
-  );
 });
 
 // Render-count proof for the Tier-1 typing-storm fix (#1533 discipline).

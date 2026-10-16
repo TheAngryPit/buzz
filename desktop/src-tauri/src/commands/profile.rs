@@ -1,12 +1,12 @@
 use std::collections::HashMap;
 
 use buzz_core_pkg::PresenceStatus;
+use nostr::{EventBuilder, Kind};
 use serde_json::Value;
 use tauri::State;
 
 use crate::{
     app_state::AppState,
-    events,
     managed_agents::persona_events::monotonic_created_at,
     models::{ProfileInfo, SearchUsersResponse, UserNotesResponse, UsersBatchResponse},
     nostr_convert,
@@ -58,16 +58,16 @@ pub async fn update_profile(
     .await?;
 
     let current = profile_metadata_from_prior(prior_events.first())?;
-    let builder = events::build_patched_profile(
+    let builder = build_patched_profile(
         current,
-        events::ProfileMetadataPatch {
+        ProfileMetadataPatch {
             display_name: display_name.as_deref(),
             name: name.as_deref(),
             picture: avatar_url.as_deref(),
             about: about.as_deref(),
             nip05: nip05_handle.as_deref(),
         },
-    )?
+    )
     .custom_created_at(monotonic_created_at(
         prior_events
             .first()
@@ -145,16 +145,53 @@ fn build_deferred_profile_event(
     avatar_url: &str,
     prior_event: Option<&nostr::Event>,
 ) -> Result<nostr::EventBuilder, String> {
-    Ok(events::build_patched_profile(
+    Ok(build_patched_profile(
         current.clone(),
-        events::ProfileMetadataPatch {
+        ProfileMetadataPatch {
             picture: Some(avatar_url),
             ..Default::default()
         },
-    )?
+    )
     .custom_created_at(monotonic_created_at(
         prior_event.map(|event| event.created_at.as_secs() as i64),
     )))
+}
+
+#[derive(Default)]
+struct ProfileMetadataPatch<'a> {
+    display_name: Option<&'a str>,
+    name: Option<&'a str>,
+    picture: Option<&'a str>,
+    about: Option<&'a str>,
+    nip05: Option<&'a str>,
+}
+
+fn build_patched_profile(
+    mut metadata: serde_json::Map<String, Value>,
+    patch: ProfileMetadataPatch<'_>,
+) -> EventBuilder {
+    patch_profile_field(&mut metadata, "display_name", patch.display_name);
+    patch_profile_field(&mut metadata, "name", patch.name);
+    patch_profile_field(&mut metadata, "picture", patch.picture);
+    patch_profile_field(&mut metadata, "about", patch.about);
+    patch_profile_field(&mut metadata, "nip05", patch.nip05);
+    EventBuilder::new(Kind::Metadata, Value::Object(metadata).to_string())
+}
+
+fn patch_profile_field(
+    metadata: &mut serde_json::Map<String, Value>,
+    field: &str,
+    value: Option<&str>,
+) {
+    let Some(value) = value else {
+        return;
+    };
+    let value = value.trim();
+    if value.is_empty() {
+        metadata.remove(field);
+    } else {
+        metadata.insert(field.to_string(), Value::String(value.to_string()));
+    }
 }
 
 fn profile_metadata_from_prior(
@@ -350,8 +387,8 @@ pub async fn get_presence(
     }
 
     // Presence is published as kind:20001 ephemeral events. Query the most
-    // recent per author. Some relays don't retain ephemeral events — we
-    // best-effort and return what we get.
+    // recent per author. Only a successful empty snapshot establishes absence;
+    // transport/auth/storage failures must reject so consumers remain unknown.
     let events = query_relay(
         &state,
         &[serde_json::json!({
@@ -359,8 +396,7 @@ pub async fn get_presence(
             "authors": pubkeys,
         })],
     )
-    .await
-    .unwrap_or_default();
+    .await?;
 
     let mut latest: HashMap<String, (u64, PresenceStatus)> = HashMap::new();
     for ev in &events {
@@ -481,9 +517,9 @@ mod tests {
     fn profile_patch_preserves_unknown_fields_and_applies_name_semantics() {
         let keys = nostr::Keys::generate();
         let current = serde_json::json!({
-            "display_name": "Vitor Cepeda Lopes",
+            "display_name": "Ada Example",
             "name": "old",
-            "website": "https://vitorcepedalopes.com",
+            "website": "https://example.com/profile",
             "banner": "https://example.com/banner.png",
             "custom": {"nested": true}
         })
@@ -491,47 +527,45 @@ mod tests {
         .expect("metadata object")
         .clone();
 
-        let event = events::build_patched_profile(
+        let event = build_patched_profile(
             current,
-            events::ProfileMetadataPatch {
-                name: Some("  theangrypit  "),
+            ProfileMetadataPatch {
+                name: Some("  ada-example  "),
                 ..Default::default()
             },
         )
-        .expect("build patched profile")
         .sign_with_keys(&keys)
         .expect("sign patched profile");
         let content: Value = serde_json::from_str(&event.content).expect("profile JSON");
 
-        assert_eq!(content["name"], "theangrypit");
-        assert_eq!(content["display_name"], "Vitor Cepeda Lopes");
-        assert_eq!(content["website"], "https://vitorcepedalopes.com");
+        assert_eq!(content["name"], "ada-example");
+        assert_eq!(content["display_name"], "Ada Example");
+        assert_eq!(content["website"], "https://example.com/profile");
         assert_eq!(content["banner"], "https://example.com/banner.png");
         assert_eq!(content["custom"]["nested"], true);
 
-        let event = events::build_patched_profile(
+        let event = build_patched_profile(
             content.as_object().expect("metadata object").clone(),
-            events::ProfileMetadataPatch {
+            ProfileMetadataPatch {
                 name: Some("   "),
                 ..Default::default()
             },
         )
-        .expect("build profile without name")
         .sign_with_keys(&keys)
         .expect("sign profile without name");
         let content: Value = serde_json::from_str(&event.content).expect("profile JSON");
 
         assert!(content.get("name").is_none());
-        assert_eq!(content["website"], "https://vitorcepedalopes.com");
+        assert_eq!(content["website"], "https://example.com/profile");
     }
 
     #[test]
     fn deferred_avatar_patch_preserves_unknown_profile_fields() {
         let keys = nostr::Keys::generate();
         let current = serde_json::json!({
-            "display_name": "Vitor Cepeda Lopes",
-            "name": "theangrypit",
-            "website": "https://vitorcepedalopes.com",
+            "display_name": "Ada Example",
+            "name": "ada-example",
+            "website": "https://example.com/profile",
             "banner": "https://example.com/banner.png"
         });
         let event = build_deferred_profile_event(
@@ -545,8 +579,8 @@ mod tests {
         let content: Value = serde_json::from_str(&event.content).expect("profile JSON");
 
         assert_eq!(content["picture"], "https://example.com/new-avatar.png");
-        assert_eq!(content["name"], "theangrypit");
-        assert_eq!(content["website"], "https://vitorcepedalopes.com");
+        assert_eq!(content["name"], "ada-example");
+        assert_eq!(content["website"], "https://example.com/profile");
         assert_eq!(content["banner"], "https://example.com/banner.png");
     }
 
@@ -586,3 +620,7 @@ mod tests {
         assert_eq!(filter["page"], serde_json::json!(1));
     }
 }
+
+#[cfg(test)]
+#[path = "profile_presence_tests.rs"]
+mod presence_tests;
